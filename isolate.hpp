@@ -10,6 +10,8 @@ namespace cocaine { namespace isolate {
 class docker_t:
     public api::isolate_t
 {
+    COCAINE_DECLARE_NONCOPYABLE(docker_t)
+
 public:
     typedef api::isolate_t category_type;
 
@@ -28,7 +30,9 @@ public:
           const api::string_map_t& environment);
 
 private:
-    std::shared_ptr<logging::log_t> m_log;
+    std::shared_ptr<cocaine::logging::log_t> m_log;
+
+    std::string m_rundir;
 
     docker::client_t m_docker_client;
     rapidjson::Value m_run_config;

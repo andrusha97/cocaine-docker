@@ -214,7 +214,7 @@ public:
 
 private:
     std::shared_ptr<client_impl_t> m_client;
-    std::shared_ptr<logging::log_t> m_logger;
+    std::shared_ptr<cocaine::logging::log_t> m_logger;
 };
 
 }} // namespace cocaine::docker

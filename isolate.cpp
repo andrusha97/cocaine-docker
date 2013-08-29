@@ -28,8 +28,11 @@ namespace {
 struct container_handle_t:
     public api::handle_t
 {
+    COCAINE_DECLARE_NONCOPYABLE(container_handle_t)
+
     container_handle_t(const docker::container_t& container):
-        m_container(container)
+        m_container(container),
+        m_terminated(false)
     { }
 
     virtual
@@ -50,16 +53,19 @@ struct container_handle_t:
     virtual
     void
     terminate() {
-        try {
-            m_container.kill();
-        } catch (...) {
-            // pass
-        }
+        if (!m_terminated) {
+            try {
+                m_container.kill();
+            } catch (...) {
+                // pass
+            }
 
-        try {
-            m_container.remove();
-        } catch (...) {
-            // pass
+            try {
+                m_container.remove();
+            } catch (...) {
+                // pass
+            }
+            m_terminated = true;
         }
     }
 
@@ -72,6 +78,7 @@ struct container_handle_t:
 private:
     docker::container_t m_container;
     docker::connection_t m_connection;
+    bool m_terminated;
 };
 
 }
@@ -82,10 +89,12 @@ docker_t::docker_t(context_t& context,
     category_type(context, name, args),
     m_log(new logging::log_t(context, name)),
     m_docker_client(
-        docker::endpoint_t::from_string(args.get("endpoint", "tcp://127.0.0.1:4243").asString()),
+        docker::endpoint_t::from_string(args.get("endpoint", "unix:///var/run/docker.sock").asString()),
         m_log
     )
 {
+    m_rundir = args.get("rundir", "/root/run").asString();
+
     rapidjson::Document info;
     m_docker_client.inspect_image(name, info);
     if (info.IsNull()) {
@@ -117,6 +126,8 @@ docker_t::docker_t(context_t& context,
     m_run_config.AddMember("Image", name.data(), m_json_allocator);
     rapidjson::Value v5(rapidjson::kObjectType);
     m_run_config.AddMember("Volumes", v5, m_json_allocator);
+    rapidjson::Value empty_object(rapidjson::kObjectType);
+    m_run_config["Volumes"].AddMember(m_rundir.data(), empty_object, m_json_allocator);
     m_run_config.AddMember("VolumesFrom", "", m_json_allocator);
     m_run_config.AddMember("WorkingDir", "", m_json_allocator);
 }
@@ -136,12 +147,21 @@ docker_t::spawn(const std::string& path,
         env.PushBack((it->first + "=" + it->second).c_str(), m_json_allocator);
     }
 
+
     auto& cmd = m_run_config["Cmd"];
+
     cmd.SetArray();
     cmd.PushBack(path.c_str(), m_json_allocator);
-    for (auto it = environment.begin(); it != environment.end(); ++it) {
+
+    fs::path endpoint = fs::path(m_rundir);
+    for (auto it = args.begin(); it != args.end(); ++it) {
         cmd.PushBack(it->first.c_str(), m_json_allocator);
-        cmd.PushBack(it->second.c_str(), m_json_allocator);
+        if (it->first == "--endpoint") {
+            endpoint /= fs::path(it->second).filename();
+            cmd.PushBack(endpoint.c_str(), m_json_allocator);
+        } else {
+            cmd.PushBack(it->second.c_str(), m_json_allocator);
+        }
     }
 
     fs::path working_dir(path);
@@ -149,8 +169,8 @@ docker_t::spawn(const std::string& path,
     m_run_config["WorkingDir"].SetString(working_dir.c_str());
 
     std::vector<std::string> binds;
-    std::string socket_dir(fs::path(args.at("endpoint")).remove_filename().c_str());
-    binds.emplace_back((socket_dir + ":" + socket_dir).c_str());
+    std::string socket_dir(fs::path(args.at("--endpoint")).remove_filename().c_str());
+    binds.emplace_back((socket_dir + ":" + m_rundir).c_str());
 
     std::unique_ptr<container_handle_t> handle(
         new container_handle_t(m_docker_client.create_container(m_run_config))

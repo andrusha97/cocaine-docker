@@ -317,6 +317,8 @@ client_impl_t::request(const http_request_t& request) {
             p_headers = curl_slist_append(p_headers, headers.back().c_str());
         }
 
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, p_headers);
+
         CURLcode errc = curl_easy_perform(curl);
 
         int code = 0;
@@ -423,6 +425,8 @@ client_impl_t::request_nobody(http_response_t& response,
             );
             p_headers = curl_slist_append(p_headers, headers.back().c_str());
         }
+
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, p_headers);
 
         CURLcode errc = curl_easy_perform(curl);
 

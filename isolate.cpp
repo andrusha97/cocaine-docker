@@ -96,7 +96,7 @@ docker_t::docker_t(context_t& context,
     m_rundir = args.get("rundir", "/root/run").asString();
 
     rapidjson::Document info;
-    m_docker_client.inspect_image(name, info);
+    m_docker_client.inspect_image(info, name);
     if (info.IsNull()) {
         m_docker_client.pull_image(args.get("registry", "").asString(),
                                    name,

@@ -6,7 +6,6 @@
 #include <memory>
 
 #include <boost/optional.hpp>
-#include <curl/curl.h>
 
 namespace cocaine { namespace docker {
 
@@ -290,75 +289,6 @@ struct http_response_t {
 
 private:
     int m_code;
-    http_headers_t m_headers;
-    std::string m_body;
-};
-
-class base_http_client_t {
-public:
-    base_http_client_t(int socket);
-
-    base_http_client_t(const base_http_client_t&) = delete;
-
-    void
-    operator=(const base_http_client_t&) = delete;
-
-    ~base_http_client_t();
-
-    const std::string&
-    body() const;
-
-    std::string&
-    body();
-
-    const http_headers_t&
-    headers() const;
-
-    http_headers_t&
-    headers();
-
-    int
-    request(const http_request_t& request);
-
-private:
-    void
-    destroy();
-
-    static
-    curl_socket_t
-    open_callback(void* user_data,
-                  curlsocktype purpose,
-                  curl_sockaddr *address);
-
-    static
-    int
-    sockopt_callback(void *user_data,
-                     curl_socket_t fd,
-                     curlsocktype purpose);
-
-    static
-    int
-    close_callback(void *user_data,
-                   curl_socket_t fd);
-
-    static
-    size_t
-    header_callback(const char *header,
-                    size_t size,
-                    size_t nmemb,
-                    void *user_data);
-
-    static
-    size_t
-    write_callback(const char *body,
-                    size_t size,
-                    size_t nmemb,
-                    void *user_data);
-
-private:
-    int m_socket;
-    CURL *m_curl;
-
     http_headers_t m_headers;
     std::string m_body;
 };

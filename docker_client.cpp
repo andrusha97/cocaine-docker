@@ -4,7 +4,6 @@
 #include <boost/algorithm/string.hpp>
 
 #include <memory>
-//#include <iostream>
 #include <system_error>
 #include <errno.h>
 
@@ -98,8 +97,12 @@ endpoint_t::to_string() const {
 }
 
 
+connection_t::connection_t() {
+    // pass
+}
+
 connection_t::connection_t(boost::asio::io_service& ioservice,
-             const endpoint_t& endpoint)
+                           const endpoint_t& endpoint)
 {
     connect(ioservice, endpoint);
 }
@@ -264,123 +267,58 @@ namespace {
     }
 }
 
-http_response_t
-client_impl_t::request(const http_request_t& request) {
-    connection_t socket(m_ioservice_ref, m_endpoint);
+client_impl_t::client_impl_t(const endpoint_t& endpoint) :
+    m_ioservice_ref(m_ioservice),
+    m_endpoint(endpoint),
+    m_curl(curl_easy_init())
+{
+    if (m_curl) {
+        curl_easy_setopt(m_curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(m_curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP);
 
-    std::string url;
-    if (m_endpoint.is_tcp()) {
-        url = "http://"
-            + m_endpoint.get_host() + ":" + boost::lexical_cast<std::string>(m_endpoint.get_port())
-            + request.uri();
-    } else {
-        url = std::string("http://")
-            + "127.0.0.1"
-            + request.uri();
-    }
+        curl_easy_setopt(m_curl, CURLOPT_OPENSOCKETFUNCTION, &open_callback);
+        curl_easy_setopt(m_curl, CURLOPT_SOCKOPTFUNCTION, &sockopt_callback);
+        curl_easy_setopt(m_curl, CURLOPT_CLOSESOCKETFUNCTION, &close_callback);
+        curl_easy_setopt(m_curl, CURLOPT_HEADERFUNCTION, &header_callback);
+        curl_easy_setopt(m_curl, CURLOPT_WRITEFUNCTION, &write_callback);
 
-    CURL *curl = curl_easy_init();
-
-    if (curl) {
-        http_response_t response;
-
-        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-        curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP);
-
-        curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, &open_callback);
-        curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &socket);
-        curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, &sockopt_callback);
-        curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, &close_callback);
-        curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, 0);
-        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, &header_callback);
-        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &write_callback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
-
-        if (boost::iequals(request.method(), "POST")) {
-            curl_easy_setopt(curl, CURLOPT_POST, 1L);
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request.body().data());
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, request.body().size());
-        } else {
-            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request.method().c_str());
-        }
-
-        std::vector<std::string> headers;
-        curl_slist *p_headers = NULL;
-        for (size_t i = 0; i < request.headers().data().size(); ++i) {
-            headers.push_back(
-                request.headers().data()[i].first + ": " + request.headers().data()[i].second
-            );
-            p_headers = curl_slist_append(p_headers, headers.back().c_str());
-        }
-
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, p_headers);
-
-        CURLcode errc = curl_easy_perform(curl);
-
-        int code = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-        response.set_code(code);
-
-        curl_slist_free_all(p_headers);
-        curl_easy_cleanup(curl);
-
-        if (errc != 0) {
-            throw std::system_error(errc, std::system_category(), curl_easy_strerror(errc));
-        }
-
-        return response;
+        curl_easy_setopt(m_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_0);
     } else {
         throw std::runtime_error("Unable to initialize libcurl.");
     }
 }
 
-http_response_t
-client_impl_t::post(const std::string& uri,
-                    const http_headers_t& headers,
-                    const rapidjson::Value& body)
+client_impl_t::client_impl_t(boost::asio::io_service& ioservice,
+              const endpoint_t& endpoint) :
+    m_ioservice_ref(ioservice),
+    m_endpoint(endpoint),
+    m_curl(curl_easy_init())
 {
-    http_request_t req("POST", uri, "1.0", headers, "");
+    if (m_curl) {
+        curl_easy_setopt(m_curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(m_curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP);
 
-    if (!body.IsNull()) {
-        rapidjson::GenericStringBuffer<rapidjson::UTF8<>> buffer;
-        rapidjson::Writer<rapidjson::GenericStringBuffer<rapidjson::UTF8<>>> writer(buffer);
+        curl_easy_setopt(m_curl, CURLOPT_OPENSOCKETFUNCTION, &open_callback);
+        curl_easy_setopt(m_curl, CURLOPT_SOCKOPTFUNCTION, &sockopt_callback);
+        curl_easy_setopt(m_curl, CURLOPT_CLOSESOCKETFUNCTION, &close_callback);
+        curl_easy_setopt(m_curl, CURLOPT_HEADERFUNCTION, &header_callback);
+        curl_easy_setopt(m_curl, CURLOPT_WRITEFUNCTION, &write_callback);
 
-        body.Accept(writer);
-
-        req.body().assign(buffer.GetString(), buffer.Size());
-
-        req.headers().reset_header("Content-Type", "application/json");
-        req.headers().reset_header("Content-Length", boost::lexical_cast<std::string>(buffer.Size()));
+        curl_easy_setopt(m_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_0);
+    } else {
+        throw std::runtime_error("Unable to initialize libcurl.");
     }
-
-    return request(req);
 }
 
-http_response_t
-client_impl_t::get(const std::string& uri,
-                   const http_headers_t& headers)
-{
-    http_request_t req("GET", uri, "1.0", headers, "");
-
-    return request(req);
-}
-
-http_response_t
-client_impl_t::del(const std::string& uri,
-                   const http_headers_t& headers)
-{
-    http_request_t req("DELETE", uri, "1.0", headers, "");
-
-    return request(req);
+client_impl_t::~client_impl_t() {
+    if (m_curl) {
+        curl_easy_cleanup(m_curl);
+    }
 }
 
 connection_t
-client_impl_t::request_nobody(http_response_t& response,
-                              const http_request_t& request)
+client_impl_t::get(http_response_t& response,
+                   const http_request_t& request)
 {
     connection_t socket(m_ioservice_ref, m_endpoint);
 
@@ -395,68 +333,192 @@ client_impl_t::request_nobody(http_response_t& response,
             + request.uri();
     }
 
-    CURL *curl = curl_easy_init();
+    curl_easy_setopt(m_curl, CURLOPT_URL, url.c_str());
 
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-        curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP);
+    curl_easy_setopt(m_curl, CURLOPT_OPENSOCKETDATA, &socket);
+    curl_easy_setopt(m_curl, CURLOPT_CLOSESOCKETDATA, 0);
+    curl_easy_setopt(m_curl, CURLOPT_HEADERDATA, &response);
+    curl_easy_setopt(m_curl, CURLOPT_WRITEDATA, &response);
 
-        curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, &open_callback);
-        curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &socket);
-        curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, &sockopt_callback);
-        curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, &close_callback);
-        curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, 0);
-        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, &header_callback);
-        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &write_callback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(m_curl, CURLOPT_HTTPGET, 1L);
 
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+    if (!request.method().empty()) {
+        curl_easy_setopt(m_curl, CURLOPT_CUSTOMREQUEST, request.method().c_str());
+    }
 
-        curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request.method().c_str());
+    std::vector<std::string> headers;
+    curl_slist *p_headers = NULL;
+    for (size_t i = 0; i < request.headers().data().size(); ++i) {
+        headers.push_back(
+            request.headers().data()[i].first + ": " + request.headers().data()[i].second
+        );
+        p_headers = curl_slist_append(p_headers, headers.back().c_str());
+    }
 
-        std::vector<std::string> headers;
-        curl_slist *p_headers = NULL;
-        for (size_t i = 0; i < request.headers().data().size(); ++i) {
-            headers.push_back(
-                request.headers().data()[i].first + ": " + request.headers().data()[i].second
-            );
-            p_headers = curl_slist_append(p_headers, headers.back().c_str());
-        }
+    curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, p_headers);
 
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, p_headers);
+    CURLcode errc = curl_easy_perform(m_curl);
 
-        CURLcode errc = curl_easy_perform(curl);
+    int code = 0;
+    curl_easy_getinfo(m_curl, CURLINFO_RESPONSE_CODE, &code);
+    response.set_code(code);
 
-        int code = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-        response.set_code(code);
+    curl_slist_free_all(p_headers);
 
-        curl_slist_free_all(p_headers);
-        curl_easy_cleanup(curl);
-
-        if (errc != 0) {
-            throw std::system_error(errc, std::system_category(), curl_easy_strerror(errc));
-        }
-    } else {
-        throw std::runtime_error("Unable to initialize libcurl.");
+    if (errc != 0) {
+        throw std::system_error(errc, std::system_category(), curl_easy_strerror(errc));
     }
 
     return socket;
 }
 
 connection_t
-client_impl_t::post_nobody(http_response_t& response,
-                           const std::string& uri,
-                           const http_headers_t& headers)
+client_impl_t::post(http_response_t& response,
+                    const http_request_t& request)
 {
-    http_request_t req("POST", uri, "1.0", headers, "");
+    connection_t socket(m_ioservice_ref, m_endpoint);
 
-    return request_nobody(response, req);
+    std::string url;
+    if (m_endpoint.is_tcp()) {
+        url = "http://"
+            + m_endpoint.get_host() + ":" + boost::lexical_cast<std::string>(m_endpoint.get_port())
+            + request.uri();
+    } else {
+        url = std::string("http://")
+            + "127.0.0.1"
+            + request.uri();
+    }
+
+    curl_easy_setopt(m_curl, CURLOPT_URL, url.c_str());
+
+    curl_easy_setopt(m_curl, CURLOPT_OPENSOCKETDATA, &socket);
+    curl_easy_setopt(m_curl, CURLOPT_CLOSESOCKETDATA, 0);
+    curl_easy_setopt(m_curl, CURLOPT_HEADERDATA, &response);
+    curl_easy_setopt(m_curl, CURLOPT_WRITEDATA, &response);
+
+    curl_easy_setopt(m_curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(m_curl, CURLOPT_POSTFIELDS, request.body().data());
+    curl_easy_setopt(m_curl, CURLOPT_POSTFIELDSIZE, request.body().size());
+
+    if (!request.method().empty()) {
+        curl_easy_setopt(m_curl, CURLOPT_CUSTOMREQUEST, request.method().c_str());
+    }
+
+    std::vector<std::string> headers;
+    curl_slist *p_headers = NULL;
+    for (size_t i = 0; i < request.headers().data().size(); ++i) {
+        headers.push_back(
+            request.headers().data()[i].first + ": " + request.headers().data()[i].second
+        );
+        p_headers = curl_slist_append(p_headers, headers.back().c_str());
+    }
+
+    curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, p_headers);
+
+    CURLcode errc = curl_easy_perform(m_curl);
+
+    int code = 0;
+    curl_easy_getinfo(m_curl, CURLINFO_RESPONSE_CODE, &code);
+    response.set_code(code);
+
+    curl_slist_free_all(p_headers);
+
+    if (errc != 0) {
+        throw std::system_error(errc, std::system_category(), curl_easy_strerror(errc));
+    }
+
+    return socket;
 }
 
+connection_t
+client_impl_t::head(http_response_t& response,
+                    const http_request_t& request)
+{
+    connection_t socket(m_ioservice_ref, m_endpoint);
+
+    std::string url;
+    if (m_endpoint.is_tcp()) {
+        url = "http://"
+            + m_endpoint.get_host() + ":" + boost::lexical_cast<std::string>(m_endpoint.get_port())
+            + request.uri();
+    } else {
+        url = std::string("http://")
+            + "127.0.0.1"
+            + request.uri();
+    }
+
+    curl_easy_setopt(m_curl, CURLOPT_URL, url.c_str());
+
+    curl_easy_setopt(m_curl, CURLOPT_OPENSOCKETDATA, &socket);
+    curl_easy_setopt(m_curl, CURLOPT_CLOSESOCKETDATA, 0);
+    curl_easy_setopt(m_curl, CURLOPT_HEADERDATA, &response);
+    curl_easy_setopt(m_curl, CURLOPT_WRITEDATA, &response);
+
+    curl_easy_setopt(m_curl, CURLOPT_NOBODY, 1L);
+
+    if (!request.method().empty()) {
+        curl_easy_setopt(m_curl, CURLOPT_CUSTOMREQUEST, request.method().c_str());
+    }
+
+    std::vector<std::string> headers;
+    curl_slist *p_headers = NULL;
+    for (size_t i = 0; i < request.headers().data().size(); ++i) {
+        headers.push_back(
+            request.headers().data()[i].first + ": " + request.headers().data()[i].second
+        );
+        p_headers = curl_slist_append(p_headers, headers.back().c_str());
+    }
+
+    curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, p_headers);
+
+    CURLcode errc = curl_easy_perform(m_curl);
+
+    int code = 0;
+    curl_easy_getinfo(m_curl, CURLINFO_RESPONSE_CODE, &code);
+    response.set_code(code);
+
+    curl_slist_free_all(p_headers);
+
+    if (errc != 0) {
+        throw std::system_error(errc, std::system_category(), curl_easy_strerror(errc));
+    }
+
+    return socket;
+}
+
+namespace {
+    http_request_t
+    make_post(const std::string& url,
+              const rapidjson::Value& value = rapidjson::Value())
+    {
+        http_request_t request("POST", url, "1.0", http_headers_t(), "");
+
+        if (!value.IsNull()) {
+            rapidjson::GenericStringBuffer<rapidjson::UTF8<>> buffer;
+            rapidjson::Writer<rapidjson::GenericStringBuffer<rapidjson::UTF8<>>> writer(buffer);
+
+            value.Accept(writer);
+
+            request.body().assign(buffer.GetString(), buffer.Size());
+
+            request.headers().reset_header("Content-Type", "application/json");
+            request.headers().reset_header("Content-Length",
+                                           boost::lexical_cast<std::string>(buffer.Size()));
+        }
+
+        return request;
+    }
+
+    http_request_t
+    make_get(const std::string& url) {
+        return http_request_t("GET", url, "1.0", http_headers_t(), "");
+    }
+
+    http_request_t
+    make_del(const std::string& url) {
+        return http_request_t("DELETE", url, "1.0", http_headers_t(), "");
+    }
+}
 
 void
 container_t::start(const std::vector<std::string>& binds) {
@@ -472,9 +534,8 @@ container_t::start(const std::vector<std::string>& binds) {
     args.SetObject();
     args.AddMember("Binds", b, allocator);
 
-    auto resp = m_client->post(cocaine::format("/containers/%s/start", id()),
-                               cocaine::docker::http_headers_t(),
-                               args);
+    http_response_t resp;
+    m_client->post(resp, make_post(cocaine::format("/containers/%s/start", id()), args));
 
     if (!(resp.code() >= 200 && resp.code() < 300)) {
         COCAINE_LOG_WARNING(m_logger,
@@ -488,9 +549,8 @@ container_t::start(const std::vector<std::string>& binds) {
 
 void
 container_t::kill() {
-    auto resp = m_client->post(cocaine::format("/containers/%s/kill", id()),
-                               cocaine::docker::http_headers_t(),
-                               rapidjson::Value());
+    http_response_t resp;
+    m_client->post(resp, make_post(cocaine::format("/containers/%s/kill", id())));
 
     if (!(resp.code() >= 200 && resp.code() < 300)) {
         COCAINE_LOG_WARNING(m_logger,
@@ -504,9 +564,8 @@ container_t::kill() {
 
 void
 container_t::stop(unsigned int timeout) {
-    auto resp = m_client->post(cocaine::format("/containers/%s/stop?t=%d", id(), timeout),
-                               cocaine::docker::http_headers_t(),
-                               rapidjson::Value());
+    http_response_t resp;
+    m_client->post(resp, make_post(cocaine::format("/containers/%s/stop?t=%d", id(), timeout)));
 
     if (!(resp.code() >= 200 && resp.code() < 300)) {
         COCAINE_LOG_WARNING(m_logger,
@@ -520,8 +579,8 @@ container_t::stop(unsigned int timeout) {
 
 void
 container_t::remove(bool volumes) {
-    auto resp = m_client->del(cocaine::format("/containers/%s?v=%d", id(), volumes?1:0),
-                              cocaine::docker::http_headers_t());
+    http_response_t resp;
+    m_client->get(resp, make_del(cocaine::format("/containers/%s?v=%d", id(), volumes?1:0)));
 
     if (!(resp.code() >= 200 && resp.code() < 300)) {
         COCAINE_LOG_WARNING(m_logger,
@@ -542,10 +601,9 @@ container_t::remove(bool volumes) {
 connection_t
 container_t::attach() {
     http_response_t resp;
-    auto conn = m_client->post_nobody(
+    auto conn = m_client->head(
         resp,
-        cocaine::format("/containers/%s/attach?logs=1&stream=1&stdout=1&stderr=1", id()),
-        cocaine::docker::http_headers_t()
+        make_post(cocaine::format("/containers/%s/attach?logs=1&stream=1&stdout=1&stderr=1", id()))
     );
 
     if (!(resp.code() >= 200 && resp.code() < 300)) {
@@ -561,11 +619,11 @@ container_t::attach() {
 }
 
 void
-client_t::inspect_image(const std::string& image,
-                        rapidjson::Document& result)
+client_t::inspect_image(rapidjson::Document& result,
+                        const std::string& image)
 {
-    auto resp = m_client->get(cocaine::format("/images/%s/json", image),
-                              cocaine::docker::http_headers_t());
+    http_response_t resp;
+    m_client->get(resp, make_get(cocaine::format("/images/%s/json", image)));
 
     if (resp.code() >= 200 && resp.code() < 300) {
         result.SetNull();
@@ -609,7 +667,8 @@ client_t::pull_image(const std::string& registry,
         }
     }
 
-    auto resp = m_client->post(request, cocaine::docker::http_headers_t(), rapidjson::Value());
+    http_response_t resp;
+    m_client->post(resp, make_post(request));
 
     if (resp.code() >= 200 && resp.code() < 300) {
         std::string body = resp.body();
@@ -652,7 +711,8 @@ client_t::pull_image(const std::string& registry,
 
 container_t
 client_t::create_container(const rapidjson::Value& args) {
-    auto resp = m_client->post("/containers/create", cocaine::docker::http_headers_t(), args);
+    http_response_t resp;
+    m_client->post(resp, make_post("/containers/create", args));
 
     if (resp.code() >= 200 && resp.code() < 300) {
         rapidjson::Document answer;

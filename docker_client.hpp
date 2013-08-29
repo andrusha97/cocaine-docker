@@ -14,6 +14,8 @@
 #include <boost/variant.hpp>
 #include <boost/asio.hpp>
 
+#include <curl/curl.h>
+
 namespace cocaine { namespace docker {
 
 class endpoint_t {
@@ -67,9 +69,7 @@ public:
     typedef boost::asio::ip::tcp::socket
             tcp_socket_t;
 
-    connection_t() {
-        // pass
-    }
+    connection_t();
 
     connection_t(boost::asio::io_service& ioservice,
                  const endpoint_t& endpoint);
@@ -102,52 +102,33 @@ private:
 
 class client_impl_t {
 public:
-    client_impl_t(const endpoint_t& endpoint) :
-        m_ioservice_ref(m_ioservice),
-        m_endpoint(endpoint)
-    {
-        // pass
-    }
+    client_impl_t(const endpoint_t& endpoint);
 
     client_impl_t(boost::asio::io_service& ioservice,
-                  const endpoint_t& endpoint) :
-        m_ioservice_ref(ioservice),
-        m_endpoint(endpoint)
-    {
-        // pass
-    }
+                  const endpoint_t& endpoint);
 
-    http_response_t
-    post(const std::string& uri,
-         const http_headers_t& headers,
-         const rapidjson::Value& body);
+    ~client_impl_t();
 
-    http_response_t
-    get(const std::string& uri,
-        const http_headers_t& headers);
-
-    http_response_t
-    del(const std::string& uri,
-        const http_headers_t& headers);
+    // Name of method defines how libcurl will do request, but request.method() is what will be written in request.
+    // For example, if call head() with request.method() = "POST",
+    // then libcurl will send post-request without body and will not read body of response.
+    connection_t
+    get(http_response_t& response,
+        const http_request_t& request);
 
     connection_t
-    post_nobody(http_response_t& response,
-                const std::string& uri,
-                const http_headers_t& headers);
+    post(http_response_t& response,
+         const http_request_t& request);
 
-private:
-    http_response_t
-    request(const http_request_t& request);
-
-    // it doesn't support sending of body with request (even if method is POST) and doesn't read body from reply
     connection_t
-    request_nobody(http_response_t& response,
-                   const http_request_t& request);
+    head(http_response_t& response,
+         const http_request_t& request);
 
 private:
     boost::asio::io_service m_ioservice; // may be not used
     boost::asio::io_service& m_ioservice_ref;
     endpoint_t m_endpoint;
+    CURL *m_curl;
 };
 
 class container_t {
@@ -201,8 +182,8 @@ public:
     }
 
     void
-    inspect_image(const std::string& image,
-                  rapidjson::Document& result);
+    inspect_image(rapidjson::Document& result,
+                  const std::string& image);
 
     void
     pull_image(const std::string& registry,

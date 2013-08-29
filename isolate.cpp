@@ -109,6 +109,7 @@ docker_t::docker_t(context_t& context,
     m_run_config.AddMember("User", "", m_json_allocator);
     m_run_config.AddMember("Memory", unsigned(args.get("memory_limit", 0).asUInt64()), m_json_allocator);
     m_run_config.AddMember("MemorySwap", unsigned(args.get("memory_swap", 0).asUInt64()), m_json_allocator);
+    m_run_config.AddMember("CpuShares", unsigned(args.get("cpu_shares", 0).asUInt64()), m_json_allocator);
     m_run_config.AddMember("AttachStdin", false, m_json_allocator);
     m_run_config.AddMember("AttachStdout", false, m_json_allocator);
     m_run_config.AddMember("AttachStderr", false, m_json_allocator);
@@ -141,12 +142,12 @@ docker_t::spawn(const std::string& path,
                 const api::string_map_t& args,
                 const api::string_map_t& environment)
 {
+    // prepare request to docker
     auto& env = m_run_config["Env"];
     env.SetArray();
     for (auto it = environment.begin(); it != environment.end(); ++it) {
         env.PushBack((it->first + "=" + it->second).c_str(), m_json_allocator);
     }
-
 
     auto& cmd = m_run_config["Cmd"];
 
@@ -172,6 +173,7 @@ docker_t::spawn(const std::string& path,
     std::string socket_dir(fs::path(args.at("--endpoint")).remove_filename().c_str());
     binds.emplace_back((socket_dir + ":" + m_rundir).c_str());
 
+    // create container
     std::unique_ptr<container_handle_t> handle(
         new container_handle_t(m_docker_client.create_container(m_run_config))
     );
